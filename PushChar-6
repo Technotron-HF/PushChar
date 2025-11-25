@@ -1,0 +1,622 @@
+:BasicUpstart2(start)
+
+
+.const SpriteX = $d004
+.const SpriteY = $d005
+.const Extraborder = $00
+.const SelChar = $21
+.const PrintChar = $18
+.const Store = $00
+Lobyte:.byte $00
+Hibyte:.byte $00
+Color: .byte $05
+*=$c000 "main program"
+start:
+lda #33			//palette found in the bottom left border of the screen (1 char)
+sta $07c0
+//jsr$e544		//clear screen
+lda #$00
+sta $fb			//sprite collision flag (not used)
+sta $fc			//row
+sta $fd			//col
+sta $fe
+sta $c504		//spacebar flag
+
+lda #$04		//abilify sprite 4 in the register
+sta $d020		//border color 4
+sta $ff			//high pointer to screen
+sta $d000+21  	//53248
+lda #13
+sta $07fa		//sprite data from block 13 of memory
+lda #100		//position x,y = 100
+sta SpriteX
+sta SpriteY
+
+
+
+// Put char '*' on screen (x=15,y=12)
+//        lda #$2a
+//        sta $0400 + 15 + 40*12
+        
+
+MainLoop:
+    
+    jsr joystick
+    jsr runstop
+    jsr spacebar
+    jsr F1						//choose next char
+    jsr F2						//choose previous char
+    jsr F3						//swap char
+    jsr clearscreen
+    jmp MainLoop
+
+      
+        
+joystick:
+// -------------------------------------------
+// READ JOYSTICK PORT 2 ($DC00)
+// Active bits = 0 when pressed
+//   1 = up
+//   2 = down
+//   4 = left
+//   8 = right
+//   16 = fire
+// -------------------------------------------
+
+    lda $dc00
+
+    // ---- UP ----
+    and #%00000001
+    bne noUp
+    jsr wait
+    dec SpriteY            // Y--
+    //jsr collision
+    lda $fb
+    cmp #$01
+    bne noUp
+    inc SpriteY
+    inc SpriteY
+	lda #$00
+	sta $fb
+    
+noUp:
+
+    // ---- DOWN ----
+    lda $dc00
+    and #%00000010
+    bne noDown
+    jsr wait
+    inc SpriteY            // Y++
+    //jsr collision
+    lda $fb
+    cmp #$01
+    bne noDown
+    dec SpriteY
+    dec SpriteY
+	lda #$00
+	sta $fb    
+    
+noDown:
+
+    // ---- LEFT ----
+    lda $dc00
+    and #%00000100
+    bne noLeft
+    jsr wait
+    lda $d010						//Vic+16 checks if we are in the right side of the screen
+    //and #%11111011
+    //beq checkpage
+    lsr
+    lsr
+    lsr
+    bcs checkpage
+    
+vaifuori:    dec SpriteX            // X--
+ 
+			jmp noLeft
+
+
+checkpage: 								//if we are on the right of the screen
+			
+			lda SpriteX
+			cmp #$00
+			bne vaifuori
+			lda $d000+16
+			and #$11111011				//clear the VIC+16 register if x=0
+			sta $d000+16
+			dec SpriteX
+			lda Extraborder
+			cmp #$00
+			beq noLeft
+			lda #$00
+			sta Extraborder
+			
+    
+noLeft:
+
+    // ---- RIGHT ----
+    lda $dc00
+    and #%00001000
+    bne noRight
+    jsr wait
+    lda SpriteX						//if Sprite x is on the borter of $ff
+    cmp #$ff
+    beq overpage
+    
+    
+     lda $d000+16						//checks if we are in the right side of the screen
+    //and #%11111011
+    //beq checkpage
+    lsr
+    lsr
+    lsr
+    bcs overpage   
+    
+    
+    
+vaifuori1:    inc SpriteX            // X++
+  
+	jmp noRight
+
+overpage: 
+
+    lda SpriteX						//if Sprite x is on the borter of $ff
+    cmp #$ff
+    bne vaifuori1
+		
+			
+		  lda#$04					//activate VIC+16 register for sprite n.4
+		  sta $d000+16
+		  inc SpriteX
+		  lda #$01
+		  sta Extraborder			//set flag in constant Extraborder
+
+			//rts
+    
+noRight:
+
+	//------FIRE---------------------------------------------------------------------------
+	lda $dc00
+	and#%00010000
+	bne norun
+	beq run
+	
+	
+norun:	jmp	joyexit        
+		
+run:	
+
+		ldy Extraborder
+		cpy #$01
+		beq !cont+
+		
+		
+		
+		lda SpriteX
+        sec
+        sbc #$18					//offset X
+               
+        lsr
+        lsr
+        lsr
+						//x/8 ->$c502        
+        sta$c502
+    lda SpriteY
+		sec							//offset Y
+		sbc #$32
+		
+		
+		
+		lsr
+		lsr
+		lsr		 		//y/8 ->$c503
+		sta $c503
+		ldx #40				//multiply 40 times y/8 ----------------------
+!loop:	clc
+		lda $c503
+		adc $fe
+		bcs !bytealto+
+		
+		sta $fe
+		
+!vai:	dex
+		cpx #$00
+		bne !loop- 
+		jmp seguito1
+
+!bytealto: 
+			
+			sta $fe
+			inc $ff
+			jmp !vai-			//---------------------------------------------
+	
+
+seguito1:								//sum x/8 to the total
+		
+		clc
+		lda $fe
+		adc $c502
+		sta $fe
+		bcs !addhighbyte+
+		jmp !cont+
+!addhighbyte:	inc $ff		//-------------------------------------------------------------
+!cont:	ldy Extraborder		//------------------------- if x>255 --------------------------
+		cpy #$01			//-------------------------------------------------------------
+		bne nextpage
+		
+		lda#$04
+		sta $ff
+		lda #$21			//when y=0 set  col=$0421
+		sta $fe
+		
+
+		
+		lda SpriteX	
+        lsr
+        lsr
+        lsr
+								//x/8 ->$c502        
+        sta$c502
+
+
+      
+             
+		lda SpriteY
+		sec							//offset Y
+		sbc #$32
+		lsr
+		lsr
+		lsr		 		//y/8 ->$c503
+		sta $c503
+	
+			        
+!cont: ldx #$40				//multiply 8x8=64 $40 times y/8 ----------------------
+!loop:	clc
+		lda $c503
+		adc $fe
+		bcs !bytealto+
+		
+		sta $fe
+		
+!vai:	dex
+		cpx #$00
+		bne !loop- 
+		jmp seguito2
+
+!bytealto: 
+			
+			sta $fe
+			inc $ff
+			jmp !vai-			//---------------------------------------------       
+        
+													//the problem is probably here
+													//find the solution!!!!!!!!!
+  seguito2:								
+						
+			clc
+			lda $c502		//x/8->Store
+			adc #30
+			sta Store
+			
+			bcs !addhigh+
+			jmp !cont+
+!addhigh:	inc$ff			
+!cont:			clc
+			lda Store
+			adc $fe
+			sta $fe
+			bcs !addhigh+
+			jmp	!cont+
+!addhigh:	inc $ff
+			
+
+		
+
+
+!cont:			
+						
+					
+
+
+		 	
+nextpage:ldy #0
+		ldx $c504							//if flag space bar is $01
+		cpx #$01
+		beq space							// jmp to space routine
+		
+		ldx Lobyte							// if flag swap is $01
+		cpx #$01
+		beq read							// jmp to read routine
+		
+		
+			
+		
+		
+				
+		lda PrintChar						//#######  PrintChar on screen ###########
+		sta ($fe),y
+		
+		lda Extraborder
+		cmp #$01
+		beq !skip+
+		
+		lda#$00
+		sta $fe
+		lda#$04
+		sta $ff
+		jmp !exit+
+!skip:	
+
+		lda#$21								//probably this part of the code is irrelevant
+		sta $fe
+		lda#$04
+		sta $ff
+
+
+
+!exit:		rts
+		
+space:	ldy #0
+		ldx #$01
+		stx $d020
+		lda#' '								//#######	delete a char on screen #######
+		sta ($fe),y
+		lda #$00
+		sta $fe
+		lda#$04
+		sta $ff
+		
+		
+		rts
+       
+read:
+
+		
+		
+		lda ($fe),y
+		sta PrintChar						//read char on screen and put it in PrintChar
+		
+		lda#$00
+		sta $fe
+		lda#$04
+		sta $ff
+		
+		rts
+
+
+	    
+       
+joyexit:
+    rts
+
+//-----------------------------------------------------------------------------------------
+
+F1:
+			
+    jsr $ff9f        //; SCNKEY
+	jsr $ffe4		//;GETIN
+	beq !exit+
+    cmp #$85
+    beq f1_pressed
+   
+
+!exit:    rts
+
+f1_pressed:
+					ldx SelChar
+					inx
+					txa
+					sta SelChar
+					sta PrintChar
+					sta $07c0					
+					rts
+//----------------------------------------------------------------------------
+
+F2:
+			
+    jsr $ff9f        //; SCNKEY
+	jsr $ffe4		//;GETIN
+	beq !exit+
+    cmp #$89
+    beq f2_pressed
+   
+
+!exit:    rts
+
+f2_pressed:
+					ldx SelChar
+					dex
+					txa
+					sta SelChar
+					sta PrintChar
+					sta $07c0					
+					rts
+//----------------------------------------------------------------------------
+
+
+F3:
+			
+    jsr $ff9f        //; SCNKEY
+	jsr $ffe4		//;GETIN
+	beq !exit+
+    cmp #$86
+    beq f3_pressed
+   
+
+!exit:    rts
+
+f3_pressed:			lda Color			//green border
+					sta $d020
+					lda #$01
+					sta Lobyte			//put in PrintChar the char under the arrow pointer
+					
+					jsr run
+					jsr wait
+					jsr wait
+					jsr wait
+					
+					lda #$00
+					sta $fb
+					lda #$04
+					sta $fc
+					
+			ldx #$0a					//there is some errors because swap works on all screen eventhough I load $0a=10 chars		
+!cont:		ldy #$00
+			
+!redo:		lda ($fb),y
+			cmp PrintChar
+			bne !go+
+			lda SelChar
+			sta ($fb),y
+			
+!go:		iny
+			cpy #$ff
+			bne !redo-
+			inc $fc
+			
+			
+			dex
+			cpx #$00
+			bne !cont-				
+					
+					
+					
+					
+					lda SelChar
+					sta PrintChar
+					
+					lda #$04
+					sta $d020
+					lda #$00
+					sta Lobyte
+					rts			
+					
+//----------------------------------------------------------------------------
+
+
+
+collision:    
+			lda $d01f
+			lsr 
+			lsr 
+			lsr
+			bcc touchedcont
+			jsr flash
+touchedcont:rts
+
+wait:		ldx#$0a		//waiting loop...
+loopx:		ldy#$ff
+loopy:		dey
+			bne loopy
+			dex
+			bne loopx
+			rts
+
+
+
+flash:		ldx#$00
+flash_loop:	stx$d020
+			inx
+			cpx #$ff
+			bne flash_loop
+			rts
+			
+//--------------------------------------------------------------------
+
+spacebar:
+			 lda $dc01        // read keyboard
+        and #%00010000   // choose the bit of spacebar
+        bne NotPressed   // if not zero -> not pressed
+        jsr wait
+        lda$c504
+        cmp#$01
+        bne !cont+
+        lda#$00
+        sta $c504
+        lda#$04
+        sta $d020
+return: rts
+        
+!cont:	lda #$c504
+		cmp#$00
+		beq go
+		jsr wait
+		inc $c504
+		lda#$01
+		sta$d020
+go:		rts
+        
+  NotPressed:rts      
+        
+
+//-------------------------------------------------------------------
+
+clearscreen:
+
+    jsr $ff9f        //; SCNKEY
+	jsr $ffe4		//;GETIN
+	beq !exit+
+    cmp #$8c
+    beq f8_pressed
+   
+
+!exit:    rts
+
+f8_pressed:
+    jsr $e544		//clear the screen
+    rts
+
+/*
+| key    |  PETSCII  code                                        |
+| ------ | ----------------------------------------------------- |
+| **F1** | **133** (`$85` in hexadecimal) 						 |
+| **F2** | **137** (`$89`) 					                     |
+| **F3** | **134** (`$86`)                                       |
+| **F4** | **138** (`$8A`) 					                     |
+| **F5** | **135** (`$87`) 						                 |
+| **F6** | **139** (`$8B`) 					                     |
+| **F7** | **136** (`$88`) 						                 |
+| **F8** | **140** (`$8C`) 						                 |
+
+*/
+
+
+
+
+
+
+     
+
+runstop:	lda $dc01        // read keyboard/joystick port
+    and #%10000000   // choose RUN/STOP bit
+    beq ExitProgram 
+    rts
+    
+ExitProgram: brk
+    
+*=$0400 "screen"
+.import c64 "screen1.prg"
+//----------------------------------------------------
+*=832 "sprite data"
+
+			.byte %11111111, %00000000, %00000000 	
+		 	.byte %11111110, %00000000, %00000000 	
+		 	.byte %11111000, %00000000, %00000000 	
+		 	.byte %11111100, %00000000, %00000000 	
+		 	.byte %11011110, %00000000, %00000000 	
+		 	.byte %10001111, %00000000, %00000000 	
+		 	.byte %00000111, %10000000, %00000000 	
+		 	.byte %00000011, %11000000, %00000000 	
+		 	.byte %00000001, %11100000, %00000000 	
+		 	.byte %00000000, %11100000, %00000000 	
+		 	.byte %00000000, %00000000, %00000000 	
+		 	.byte %00000000, %00000000, %00000000 	
+		 	.byte %00000000, %00000000, %00000000 	
+		 	.byte %00000000, %00000000, %00000000 	
+		 	.byte %00000000, %00000000, %00000000 	
+		 	.byte %00000000, %00000000, %00000000 	
+		 	.byte %00000000, %00000000, %00000000 	
+		 	.byte %00000000, %00000000, %00000000 	
+		 	.byte %00000000, %00000000, %00000000 	
+		 	.byte %00000000, %00000000, %00000000 	
+		 	.byte %00000000, %00000000, %00000000
