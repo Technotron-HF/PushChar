@@ -1,0 +1,962 @@
+:BasicUpstart2(start)
+
+
+
+*=$0400 "screen"
+.import c64 "monastery.prg"
+
+
+
+.const SpriteX = $d004
+.const SpriteY = $d005
+.const SelChar = $21
+.const PrintChar = $18
+.const Store = $00
+.const ScreenNum = $00
+.const PC = $00
+HI:.byte $d8
+LO:.byte $00
+Swap:.byte $00
+Service:.byte $00
+Border: .byte $03
+Color: .byte $00
+
+
+*=$c000 "main program"
+
+start:
+
+lda #$d8
+sta $03			//color hibyte
+
+lda #$00
+sta $c506		//extraborder
+sta $02			//color lo byte
+sta $fb			//sprite collision flag (not used)
+sta $fc			//row
+sta $fd			//col
+sta $fe			//screen lo byte
+sta $c504		//spacebar flag
+
+lda #$04		//abilify sprite 4 in the register
+sta $d020		//border color 4
+sta $ff			//screen hi byte
+sta $d000+21  	//53248
+lda #13
+sta $07fa		//sprite data from block 13 of memory
+lda #$18		//position x,y = $18,$32
+sta SpriteX
+lda #$32
+sta SpriteY
+
+  
+//copy colors of the screen image------------------------- 
+  
+    ldx #0
+copy:
+    lda colorData, x
+    sta $d800, x
+    inx
+    cpx #$ff
+    bne copy
+
+    
+    ldx #0
+copy2:
+    lda colorData+$ff, x
+    sta $d800+$ff, x
+    inx
+    cpx #$ff
+    bne copy2
+	ldx#0
+copy3:
+    lda colorData+$ff+$ff, x
+    sta $d800+$ff+$ff, x
+    inx
+    cpx #$f9
+    bne copy3
+    ldx#0
+ copy4:
+    lda colorData+$ff+$ff+$ff, x
+    sta $d800+$ff+$ff+$ff, x
+    inx
+    cpx #235
+    bne copy4   
+    
+//------------------------------------------------------    
+      
+    
+
+MainLoop:
+    
+    jsr joystick
+    jsr runstop
+    jsr spacebar
+    jsr F1						//choose screen 1
+    jsr F2						//choose screen 0
+    jsr F3						//swap char
+    jsr F8						//clearscreen
+    jsr F4						//choose color
+    jmp MainLoop
+
+      
+        
+joystick:
+// --------------------------------------------------------------------------------------------------
+// READ JOYSTICK PORT 2 ($DC00)
+// Active bits
+//   1 = up
+//   2 = down
+//   4 = left
+//   8 = right
+//   16 = fire
+// --------------------------------------------------------------------------------------------------
+
+    lda $dc00
+
+    // ---- UP ----
+    and #%00000001
+    bne noUp
+    jsr wait
+    dec SpriteY            // Y--
+    lda $fb
+    cmp #$01
+    bne noUp
+    
+    
+	lda #$00
+	sta $fb
+    
+noUp:
+
+    // ---- DOWN ----
+    lda $dc00
+    and #%00000010
+    bne noDown
+    jsr wait
+    inc SpriteY            // Y++
+    lda $fb
+    cmp #$01
+    bne noDown
+   
+    
+	lda #$00
+	sta $fb    
+    
+noDown:
+
+    // ---- LEFT ----
+    lda $dc00
+    and #%00000100
+    bne noLeft
+    jsr wait
+    lda $d010						//Vic+16 checks if we are in the right side of the screen
+    lsr
+    lsr
+    lsr
+    bcs checkpage
+    
+goOut:    dec SpriteX            // X--
+ 
+			jmp noLeft
+
+
+checkpage: 								//if we are on the right of the screen
+			
+			lda SpriteX
+			cmp #$00
+			bne goOut
+			lda $d010
+			and #$11111011				//clear the VIC+16 register if x=0
+			sta $d010
+			dec SpriteX
+			lda $c506	//extraborder
+			cmp #$00
+			beq noLeft
+			lda #$00
+			sta $c506
+			sta $fe						//reset screen coordinates
+			sta $02
+			lda	#$04
+			sta $ff
+			lda #$d8
+			sta $03
+			lda ScreenNum
+		    cmp #$01
+	      	beq !goahead+
+	      	
+	      	lda#$00
+		  sta $fe
+		  sta $02
+		  lda#$04
+		  sta $ff
+		  lda #$d8
+		  sta $03
+	      	
+	      	
+	      	
+		    jmp noLeft
+!goahead: lda#$00
+		  sta $fe
+		  lda#$0c
+		  sta $ff
+    
+noLeft:
+
+    // ---- RIGHT ----
+    lda $dc00
+    and #%00001000
+    bne noRight
+    
+    
+    jsr wait
+    lda SpriteX						//if Sprite x is on the borter of $ff
+    cmp #$ff
+    beq overpage
+    
+    
+    lda $d010						//checks if we are in the right side of the screen
+    lsr								//Vic+16
+    lsr
+    lsr
+    bcs overpage   
+    
+    
+    
+goOut1:    inc SpriteX            // X++
+  
+	jmp noRight
+
+overpage: 
+
+    lda SpriteX						//if Sprite x is on the borter of $ff
+    cmp #$ff
+    bne goOut1
+		
+			
+		  lda#$04					//activate VIC+16 register for sprite n.4
+		  sta $d010
+		  inc SpriteX
+		  lda #$01
+		  sta $c506			//set flag in constant Extraborder
+
+			//rts
+    
+noRight:
+
+	//------FIRE---------------------------------------------------------------------------
+	lda $dc00
+	and#%00010000
+	bne norun
+	beq run
+	
+	
+norun:	jmp	joyexit        
+		
+run:	
+		lda ScreenNum				//check if we are on screen 1
+		cmp #$01
+		beq !goahead+
+		jmp !screenzero+
+!goahead: lda#$00
+		  sta $fe
+		  lda#$0c
+		  sta $ff
+		  
+!setcoord:	
+			lda $c506			//check if x>255
+			cmp#$01
+			bne !begin+
+			lda #$1d
+			sta $fe
+			lda #$0c
+			sta $ff
+			
+			jmp !cont3+
+
+!screenzero:
+
+			
+			lda #$00						//we are in screen 0
+			sta $fe
+			sta $02
+			lda #$04
+			sta $ff
+			lda #$d8
+			sta $03
+											
+			
+			ldx $c506					//check if x>255
+			cpx #$01
+			bne !noextra+
+			
+			
+			lda #$1d
+			sta $fe
+			sta $02
+			lda #$04
+			sta $ff
+			lda #$d8
+			sta $03
+			
+			lda #$1d
+			sta $02
+			lda #$d8
+			sta $03
+			
+			
+			
+			
+			jmp !cont3+		
+!noextra:	lda#$00
+			sta$fe
+			sta$02
+			lda #$04
+			sta $ff
+			lda #$d8
+			sta $03
+
+		
+!begin:		
+		lda SpriteX
+        sec
+        sbc #$18					//offset X
+               
+        lsr
+        lsr
+        lsr
+						//x/8 ->$c502        
+        sta$c502
+    lda SpriteY
+		sec							//offset Y
+		sbc #$32
+		
+		
+		
+		lsr
+		lsr
+		lsr		 		//y/8 ->$c503
+		sta $c503
+		ldx #40				//multiply 40 times y/8 ----------------------
+!loop:	clc
+		lda $c503
+		adc $fe
+		bcs !hiByte+
+		
+		sta $fe
+		lda $c503
+		adc $02
+		sta $02
+		
+!goBackward:dex
+		cpx #$00
+		bne !loop- 
+		jmp next1
+
+!hiByte: 
+			
+			sta $fe
+			//sta $02
+			inc $ff
+			inc $03
+			jmp !goBackward-			//---------------------------------------------
+	
+
+next1:								//sum x/8 to the total
+		
+		clc
+		lda $fe
+		adc $c502
+		sta $fe
+		sta $02
+		bcs !addhighbyte+
+		jmp !exit+
+!addhighbyte:	inc $ff	
+				inc $03
+				jmp !exit+
+							//-------------------------------------------------------------
+!contextra:					//------------------------- if x>255 --------------------------
+							//-------------------------------------------------------------
+		ldy $c506
+		cpy #$01
+		bne !exit+
+		
+		lda ScreenNum
+		cmp #$01
+		beq !goahead+
+		jmp !cont3+
+!goahead: 
+			
+			
+!continue:						// when screen 0:
+								// set  col=$041d 29 chars=$1d
+			
+		
+
+		
+!cont3:	
+		
+		lda SpriteX	
+        lsr
+        lsr
+        lsr
+								//x/8 ->$c502        
+        sta$c502
+        
+        
+      
+		lda SpriteY
+		sec							//offset Y
+		sbc #$32
+		lsr
+		lsr
+		lsr		 		//y/8 ->$c503
+		sta $c503
+
+//----------------------------------------------     
+												
+								
+			ldx $c503	//y/8
+			cpx #$00
+			beq !goAhead+
+	!loop:	clc
+			lda #40		//if y-- or y++ then y=y+40
+			adc $fe			
+			sta $fe
+			sta $02
+			bcs !addhigh+
+			dex
+			cpx #$00
+			bne !loop-
+			jmp !goAhead+
+!addhigh:	inc $ff
+			inc $03
+			dex
+			cpx#$00
+			bne !loop-
+			
+				
+!goAhead:	clc							//add x/8
+			lda $c502	
+			adc $fe	//x/8
+			sta $fe
+			sta $02
+			bcs !addhigh+
+			jmp	!exit+
+!addhigh:	inc $ff 
+			inc $03
+			
+			
+	
+
+!exit:
+			
+						
+					
+
+											//-------------------------------------------
+		 	
+!nextpage:
+
+			lda ScreenNum
+			cmp#$01
+			beq read
+
+
+		ldy #0
+		ldx $c504							//if flag space bar = $01
+		cpx #$01
+		beq space							// jmp to space routine
+		
+		ldx Swap							// if flag swap = $01
+		cpx #$01
+		beq read							// jmp to read routine
+		
+		
+			
+		
+		
+				
+		lda PrintChar						//#######  PrintChar on screen ###########
+		sta ($fe),y
+		lda $d020
+		sta ($02),y
+
+		
+		
+		
+		lda $c506 //extraborder
+		cmp #$01
+		beq !skip+
+		lda#$00
+		sta $fe
+		sta $02
+		lda#$04
+		sta $ff
+		lda #$d8
+		sta $03
+		jmp !exit+
+!skip:	
+
+
+
+
+!exit:		rts
+		
+space:	ldy #0
+		ldx #$01
+		stx $d020
+		lda#' '								//#######	delete a char on screen #######
+		sta ($fe),y
+		
+		
+		lda $c506 //extraborder
+		cmp #$01
+		beq !skip+		
+		
+		
+		lda #$00
+		sta $fe
+		lda#$04
+		sta $ff
+		jmp !exit+
+!skip:		
+		
+		rts
+       
+read:
+
+		
+		ldy #0
+		lda ($fe),y
+		
+		
+		ldx Swap
+		cpx #$01
+		bne !ScreenZero+
+		ldx ScreenNum
+		cpx #$01
+		bne !ScreenZero+
+		sta SelChar
+		jmp !gohere+
+		
+!ScreenZero:	sta PrintChar				//read char on screen and put it in PrintChar
+		
+		
+!gohere:		
+		lda $c506  //extraborder
+		cmp #$01
+		beq !skip+		
+		
+		lda ScreenNum
+		cmp #$01
+		beq !goahead+
+		jmp !continue+
+!goahead: lda #$00			
+		  sta $fe
+		  lda#$0c
+		  sta $ff
+		jmp !skip+
+		
+				
+!continue:	lda#$00
+		sta $fe
+		lda#$04
+		sta $ff
+		
+!skip:			
+		rts
+
+
+	    
+       
+joyexit:
+    rts
+//---------------------------------------------------------------------------------------------------
+//---------------------------------------------------------------------------------------------------
+
+F1:
+			
+    jsr $ff9f        //; SCNKEY
+	jsr $ffe4		//;GETIN
+	beq !exit+
+    cmp #$85
+    beq f1_pressed
+   
+
+!exit:    rts
+
+f1_pressed:			
+
+
+		lda #$20          //---------clear screen
+        ldx #0
+
+Loop:
+        sta $0c00,x      
+        sta $0c00+256,x  
+        sta $0c00+512,x  
+        sta $0c00+768,x  
+
+        inx
+        bne Loop       
+        
+LastBytes:
+        sta $0c00+1024-24,x
+        inx
+        cpx #24
+        bne LastBytes 	//---------------------
+					
+					lda $dd02       //set OUT
+					ora #%00000011
+					sta $dd02
+					
+				/*	lda $dd00		//choose bank 0
+					and #%11111100
+					ora #%00000011
+					sta $dd00 */
+									//change screen memory to $0800 =2048 (basic area)
+					lda $d018
+					and #%00111111
+					ora	#%00100000
+					sta $d018
+					
+					
+					
+		/* comment out...-----------------------------------			
+					lda $dc0e	//stop IRQ
+					and #$fe	
+					sta $dc0e
+					
+					
+					
+								// stop BASIC and KERNAL, turn on CHARROM
+					lda $01
+					and #251
+					sta $01
+					
+					
+					
+					
+					
+					ldx #$00
+					
+!loop:				lda $3000,x		//read ROM Char at $3000
+					sta $3000,x		//and put it into RAM
+					inx
+					cpx #$FF
+					bne !loop-
+
+					lda $d018		//set char pointer to $3000 in RAM
+					and #240
+					ora #12
+					sta $d018
+
+
+
+								// set the memory to normal
+					lda	$01
+					ora #4
+					sta $01
+					
+					
+					lda $dc0e	//reactivate IRQ
+					ora #$01	
+	----------------sta $dc0e	                   comment out...*/
+					
+					ldx #$00	//poke on screen 1 $ff chars
+!loop:				lda Service
+					sta $0c00,x
+					inc Service
+					inx
+					cpx#$ff
+					bne !loop-
+									
+								// change location of Sprite pointer
+					lda #13
+					sta $0ffa	// of the Sprite n.2
+					
+					lda #$01		//set flag screen n.1
+					sta ScreenNum
+					
+					lda #$00
+					sta Service
+					
+					rts
+					
+//----------------------------------------------------------------------------
+
+F2:
+			
+    jsr $ff9f        //; SCNKEY
+	jsr $ffe4		//;GETIN
+	beq !exit+
+    cmp #$89
+    beq f2_pressed
+   
+
+!exit:    rts
+
+f2_pressed:
+					
+					
+					lda $dd02       //set OUT
+					ora #%00000011
+					sta $dd02
+					
+					
+				/*	lda $dd00		//choose bank 0
+					and #%11111100
+					ora #%00000011
+					sta $dd00					
+					*/
+					
+					lda $d018			//change screen memory to $0400 =1024 					lda $d018
+					and #%00001111
+					ora	#%00010000
+					sta $d018
+					
+
+					lda #$00			//set flag to screen n. 0
+					sta ScreenNum
+					
+				
+					rts					
+					
+					
+					
+					
+//----------------------------------------------------------------------------
+// How swap works: 1) Press F1 to show the palette
+//				   2) Choose a char and press fire
+//				   3) Press F3 to select swap
+//				   4) Press F2 to show screen 0
+//				   5) Hover the pointer over the char to be swapped
+//				   6) Press F3 again to swap
+//----------------------------------------------------------------------------				   
+				   
+
+F3:
+			
+    jsr $ff9f        //; SCNKEY
+	jsr $ffe4		//;GETIN
+	beq !exit+
+    cmp #$86
+    beq f3_pressed
+   
+
+!exit:    rts
+
+f3_pressed:			
+
+
+					lda Swap
+					cmp#$01
+					beq !exit+
+
+					lda #$05
+					sta $d020
+					jsr wait
+					jsr wait
+					jsr wait
+					
+					lda #$01
+					sta Swap			//put in PrintChar the char under the arrow pointer
+					
+					jsr run
+					jsr wait
+					jsr wait
+					jsr wait
+					
+					lda #$00
+					sta $fb
+					lda #$04
+					sta $fc
+					
+			ldx #$0a					//there is some errors because swap works on all screen eventhough I load $0a=10 chars		
+!cont:		ldy #$00
+			
+!redo:		lda ($fb),y
+			cmp PrintChar
+			bne !go+
+			lda SelChar
+			sta ($fb),y
+			
+!go:		iny
+			cpy #$ff
+			bne !redo-
+			inc $fc
+			
+			
+			dex
+			cpx #$00
+			bne !cont-				
+					
+					
+					
+					
+					lda SelChar
+					sta PrintChar
+					
+					lda Border
+					sta $d020
+					lda #$00
+					sta Swap
+
+!exit:
+					rts			
+					
+//----------------------------------------------------------------------------
+
+F4:
+			
+    jsr $ff9f        //; SCNKEY
+	jsr $ffe4		//;GETIN
+	beq !exit+
+    cmp #$8a
+    beq f4_pressed
+   
+
+!exit:    rts
+
+f4_pressed:	
+					inc$d020
+					inc Border
+					lda $d020
+					sta $d029		//sprite n.2 color
+					
+					rts
+					
+//-----------------------------------------------------------------------------
+
+collision:    
+			lda $d01f
+			lsr 
+			lsr 
+			lsr
+			bcc touchedcont
+			jsr flash
+touchedcont:rts
+
+wait:		ldx#$0a		//waiting loop...
+loopx:		ldy#$ff
+loopy:		dey
+			bne loopy
+			dex
+			bne loopx
+			rts
+
+
+
+flash:		ldx#$00
+flash_loop:	stx$d020
+			inx
+			cpx #$ff
+			bne flash_loop
+			rts
+			
+//--------------------------------------------------------------------
+
+spacebar:
+			 lda $dc01        // read keyboard
+        and #%00010000   // choose the bit of spacebar
+        bne NotPressed   // if not zero -> not pressed
+        jsr wait
+        lda$c504
+        cmp#$01
+        bne !cont+
+        lda#$00
+        sta $c504
+        lda Border
+        sta $d020
+return: rts
+        
+!cont:	lda #$c504
+		cmp#$00
+		beq go
+		jsr wait
+		inc $c504
+		lda#$01
+		sta$d020
+go:		rts
+        
+  NotPressed:rts      
+        
+
+//-------------------------------------------------------------------
+
+F8:
+
+    jsr $ff9f        //; SCNKEY
+	jsr $ffe4		//;GETIN
+	beq !exit+
+    cmp #$8c
+    beq f8_pressed
+   
+
+!exit:    rts
+
+f8_pressed:
+    jsr $e544		//clear the screen
+    rts
+
+/*
+| key    |  PETSCII  code                                        |
+| ------ | ----------------------------------------------------- |
+| **F1** | **133** (`$85` in hexadecimal) 						 |
+| **F2** | **137** (`$89`) 					                     |
+| **F3** | **134** (`$86`)                                       |
+| **F4** | **138** (`$8A`) 					                     |
+| **F5** | **135** (`$87`) 						                 |
+| **F6** | **139** (`$8B`) 					                     |
+| **F7** | **136** (`$88`) 						                 |
+| **F8** | **140** (`$8C`) 						                 |
+
+*/
+
+
+
+
+
+
+     
+
+runstop:	lda $dc01        // read keyboard/joystick port
+    and #%10000000   // choose RUN/STOP bit
+    beq ExitProgram 
+    rts
+    
+ExitProgram: //jmp $fce2
+			 brk	
+
+
+
+
+
+// External file which contains 1000 bytes of color RAM
+colorData:
+    .import c64 "monasterycol.prg"
+//----------------------------------------------------
+*=832 "sprite data"
+
+			.byte %11111111, %00000000, %00000000 	
+		 	.byte %11111110, %00000000, %00000000 	
+		 	.byte %11111000, %00000000, %00000000 	
+		 	.byte %11111100, %00000000, %00000000 	
+		 	.byte %11011110, %00000000, %00000000 	
+		 	.byte %10001111, %00000000, %00000000 	
+		 	.byte %00000111, %10000000, %00000000 	
+		 	.byte %00000011, %11000000, %00000000 	
+		 	.byte %00000001, %11100000, %00000000 	
+		 	.byte %00000000, %11100000, %00000000 	
+		 	.byte %00000000, %00000000, %00000000 	
+		 	.byte %00000000, %00000000, %00000000 	
+		 	.byte %00000000, %00000000, %00000000 	
+		 	.byte %00000000, %00000000, %00000000 	
+		 	.byte %00000000, %00000000, %00000000 	
+		 	.byte %00000000, %00000000, %00000000 	
+		 	.byte %00000000, %00000000, %00000000 	
+		 	.byte %00000000, %00000000, %00000000 	
+		 	.byte %00000000, %00000000, %00000000 	
+		 	.byte %00000000, %00000000, %00000000 	
+		 	.byte %00000000, %00000000, %00000000
